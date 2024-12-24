@@ -19,6 +19,8 @@ from statsmodels.tsa.api import VAR
 import prepare_data as prep
 import construct_MBC as mbc
 
+### Constructing MBC shock
+
 # Load the data
 file_path = 'data/monthly.csv'
 data = pd.read_csv(file_path)
@@ -52,3 +54,5 @@ mbc_shock,mbc_contributions = mbc.constuctMBC(var_data, fitted_model)
 print("MBC Shock (first singular vector):", mbc_shock)
 print("Contribution to variance:", mbc_contributions)
 
+
+### SP-IV
