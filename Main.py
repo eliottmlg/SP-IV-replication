@@ -33,8 +33,8 @@ MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
 ### Data formatting for SP-IV
 
 # Path to your .mat file
-file_path = 'data/mbc.csv'
-MBC_irfs = pd.read_csv(file_path,header=None)
+file_path = 'data/MBC_IRFs.csv'
+MBC_irfs = pd.read_csv(file_path,header=0)
 
 # constructing IRFs for annual inflation based on IRFs for monthly annualised inflation
 # 
