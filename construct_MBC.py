@@ -18,39 +18,40 @@ def constuctMBC(data, var_results):
     # Set the frequency range for business cycles (6-32 quarters)
     low_freq = 1 / 32
     high_freq = 1 / 6
-    
+
     # Step 2: Compute the spectral density matrix
     def compute_spectral_density(var_results, freq):
-        """Compute spectral density matrix for the VAR model at a given frequency."""
+        """Compute spectral density matrix for a given frequency."""
         omega = 2 * np.pi * freq
         I = np.eye(var_results.neqs)
-        A = np.sum(
-            [var_results.coefs[i] * np.exp(-1j * omega * (i + 1)) for i in range(var_results.k_ar)],
-            axis=0
-        )
+        A = np.sum([var_results.coefs[i] * np.exp(-1j * omega * (i + 1))
+                    for i in range(var_results.k_ar)], axis=0)
         return np.linalg.inv(I - A) @ var_results.sigma_u @ np.linalg.inv(I - A).conj().T
-    
-    # Step 3: Integrate variance contributions
+
+    # Step 3: Integrate variance contributions over the 6-32 quarters frequency band
     freqs = np.linspace(low_freq, high_freq, 500)
     spectral_density_sum = np.zeros((data.shape[1], data.shape[1]), dtype=complex)
-    
+
     for freq in freqs:
         spectral_density_sum += compute_spectral_density(var_results, freq)
-    
+
     # Normalize by the frequency band width
     spectral_density_sum /= len(freqs)
-    
-    # Step 4: Convert complex matrix to real before SVD
-    spectral_density_real = np.real(spectral_density_sum)
-    U, S, Vt = svd(spectral_density_real)
-    
-    # The first singular vector corresponds to the main business cycle shock
-    mbc_shock = U[:, 0]
-    
-    # Step 5: Compute the contribution of the MBC shock to the variance
-    mbc_contributions = np.real(np.dot(mbc_shock, spectral_density_sum @ mbc_shock))
-    
-    return mbc_shock, mbc_contributions
+
+    # Ensure spectral_density_sum is real for SVD
+    spectral_density_sum_real = np.real(spectral_density_sum)
+
+    # Step 4: Perform singular value decomposition (SVD) on the integrated spectral density matrix
+    U, S, Vt = svd(spectral_density_sum_real)
+
+    # Find the vector that maximizes unemployment fluctuations
+    unemployment_index = data.columns.get_loc('unemployment_rate')
+    max_contribution_vector = U[:, unemployment_index]
+
+    # Step 5: Compute the time series for the shock maximizing unemployment fluctuations
+    shock_series = var_results.resid @ max_contribution_vector
+
+    return shock_series, max_contribution_vector
 
 def constuctMBC_bandpass(residuals):
         

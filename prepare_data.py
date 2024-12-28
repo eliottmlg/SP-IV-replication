@@ -22,7 +22,7 @@ def clean_data(data):
     data['pi_1y_diff'] = data['pi_1y_t_plus_12'] - data['pi_1y_t_minus_1']  
     
     var_data = data.iloc[780:1286,] # keep Jan 1978 to Feb 2020
-    
+    MBCshock_data = var_data
     
     var_columns = ['pi_dep','core_CPI_annualised_percent_change', 'unemployment_rate', 
                 '10Y_Treasury_rate','3M_Treasury_rate',
@@ -30,4 +30,11 @@ def clean_data(data):
     
     var_data = var_data[var_columns]
 
-    return var_data
+    mbc_columns = ['core_CPI_annualised_percent_change', 'unemployment_rate', 
+                   'log_industrial_production', 'PPI_commodity',
+                '10Y_Treasury_rate','3M_Treasury_rate']
+    
+    MBCshock_data = var_data[mbc_columns]
+
+
+    return var_data, MBCshock_data
