@@ -38,3 +38,5 @@ def clean_data(data):
 
 
     return var_data, MBCshock_data
+
+
