@@ -78,6 +78,7 @@ plt.legend()
 plt.show()
  
 ### Data formatting for SP-IV
+H = 12 # chosen horizon to keep in IRFs
 
 # Path to your .mat file
 file_path = 'data/aaaIRF.csv'
@@ -113,12 +114,13 @@ X_u = X_u.iloc[0:13]
 
 theta_Y = pd.concat([X_inflation, X_u], axis=1) 
 theta_Y = theta_Y.rename(columns={0: 'pi_12L-pi_1l', 1: 'U'})
+theta_Y = theta_Y.iloc[0:H] # cut at chosen horizon
  # handle NA
 theta_Y = theta_Y.dropna()
 theta_Y = theta_Y.fillna(0.07)
 theta_Y = theta_Y.reset_index(drop=True)
 
-theta_y = theta_y.iloc[0:len(theta_Y)]
+theta_y = theta_y.iloc[0:H]
 theta_y = theta_y.rename(columns={0: 'piM-piY_1l'})
 
 # plot
@@ -135,7 +137,7 @@ plt.show()
 ### SP-IV
 
 # Fit the regression model
-model = sm.OLS(theta_y, theta_Y.iloc[0:12]).fit()
+model = sm.OLS(theta_y, theta_Y).fit()
 
 # Print a detailed summary
 print(model.summary())
