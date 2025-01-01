@@ -7,6 +7,9 @@ Created on Tue Dec 24 15:39:12 2024
 Prepare data for VAR estimation 
 """
 
+import numpy as np
+import pandas as pd
+
 def clean_data(data):
     """Compute spectral density matrix for the VAR model at a given frequency."""
     
@@ -40,3 +43,44 @@ def clean_data(data):
     return var_data, MBCshock_data
 
 
+def compute_annual_inflation_from_monthly_annualized(monthly_annualized_inflation):
+    """
+    Compute annual inflation rates from a time series of monthly annualized inflation rates.
+
+    Parameters:
+    monthly_annualized_inflation (pandas Series): Time series of monthly annualized inflation rates (as decimals).
+
+    Returns:
+    pandas Series: Time series of annual inflation rates.
+    """
+  
+    # Convert monthly annualized inflation to monthly inflation
+    monthly_inflation = (1 + monthly_annualized_inflation) ** (1 / 12) - 1
+
+    # Compute the rolling 12-month cumulative inflation
+    cumulative_12_month_inflation = (1 + monthly_inflation).rolling(window=12).apply(np.prod, raw=True) - 1
+
+    return cumulative_12_month_inflation
+
+
+def from_monthly_annualized_to_Q(monthly_annualized_inflation):
+    """
+    Compute quarterly inflation rates from a time series of monthly annualized inflation rates.
+
+    Parameters:
+    monthly_annualized_inflation (pandas Series): Time series of monthly annualized inflation rates (as decimals).
+
+    Returns:
+    pandas Series: Time series of annual inflation rates.
+    """
+    # Convert monthly annualized inflation to monthly inflation
+    monthly_inflation = (1 + monthly_annualized_inflation) ** (1 / 12) - 1
+
+    # Compute 3-month cumulative inflation (one quarter)
+    cumulative_3_month_inflation = (1 + monthly_inflation).rolling(window=3).apply(np.prod, raw=True) - 1
+
+    # Annualize the 3-month inflation
+    annualized_inflation = (1 + cumulative_3_month_inflation) ** (12 / 3) - 1
+
+    
+    return annualized_inflation
