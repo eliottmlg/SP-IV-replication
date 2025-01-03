@@ -95,23 +95,27 @@ plt.show()
 
 theta_y = theta_y[0:-1:3] # take only the 0th, 3th, 6th, ... observations
 theta_y = theta_y.reset_index(drop=True)
+theta_y.iloc[0:21].plot() 
+plt.show()
 
-# Yearly
+# Yearly inflation
 inflation_yearly = prep.compute_annual_inflation_from_monthly_annualized(theta_y)
 inflation_yearly = inflation_yearly.iloc[13:-1].reset_index(drop=True)
 
+# construct first predictor (difference in inflations)
 inflation_yearly_lag1 = inflation_yearly.shift(1) # lagging irf for annual inflation
 inflation_yearly_lead12 = inflation_yearly.shift(-12) # leading irf for annual inflation
 X_inflation = inflation_yearly_lead12 - inflation_yearly_lag1
 X_inflation = X_inflation.iloc[0:13]
 
-# for unemployment
+# unemployment
 X_u = MBC_irfs[[1]]
 X_u = shock_adjusted_irfs[[1]]
 X_u = X_u[0:-1:3] # take only the 0th, 3th, 6th, ... observations
 X_u = X_u.reset_index(drop=True)
-X_u = X_u.iloc[0:13]
+X_u = X_u.iloc[0:H]
 
+# construct predictors matrix
 theta_Y = pd.concat([X_inflation, X_u], axis=1) 
 theta_Y = theta_Y.rename(columns={0: 'pi_12L-pi_1l', 1: 'U'})
 theta_Y = theta_Y.iloc[0:H] # cut at chosen horizon
@@ -120,7 +124,10 @@ theta_Y = theta_Y.dropna()
 theta_Y = theta_Y.fillna(0.07)
 theta_Y = theta_Y.reset_index(drop=True)
 
+# construct dependent variable 
+theta_y = theta_y[0:len(inflation_yearly_lag1)] - inflation_yearly_lag1
 theta_y = theta_y.iloc[0:H]
+theta_y = theta_y.dropna()
 theta_y = theta_y.rename(columns={0: 'piM-piY_1l'})
 
 # plot
