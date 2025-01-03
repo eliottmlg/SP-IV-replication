@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.tsa.api import VAR
 import prepare_data as prep
+from scipy.io import savemat
+
 
 
 ### Constructing MBC shock
@@ -30,7 +32,26 @@ data = pd.read_csv(file_path)
 var_data,MBCshock_data = prep.clean_data(data)
 # run these 2 below to save
 #var_data.to_csv(r'data/var_data.csv',index=False)
-#MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
+
+# Convert DataFrame to a dictionary compatible with MATLAB
+
+# Convert DataFrame to a NumPy array
+data_matrix = MBCshock_data.to_numpy()
+
+# Create a dictionary with the matrix and column names
+matlab_dict = {
+    'data': data_matrix,
+    'columns': MBCshock_data.columns.to_list()
+}
+
+# Save to .mat file
+savemat(r'data/MBC.mat', matlab_dict)
+MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
+
+
+
+### REPLIC
+
 
 # load mbc shock as linear combination of orthogonal shocks from Business Cycle Anatomy
 file_path = 'data/MBC_shock.csv'
