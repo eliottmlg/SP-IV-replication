@@ -19,6 +19,7 @@ import statsmodels.api as sm
 from statsmodels.tsa.api import VAR
 import prepare_data as prep
 from scipy.io import savemat
+import KLM_plot as klmm
 
 
 
@@ -45,8 +46,8 @@ matlab_dict = {
 }
 
 # Save to .mat file
-savemat(r'data/MBC.mat', matlab_dict)
-MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
+#savemat(r'data/MBC.mat', matlab_dict)
+#MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
 
 
 
@@ -68,8 +69,9 @@ sigma_u = var_results.sigma_u  # Covariance matrix of residuals
 MBCshock_timeseries = np.dot(var_residuals, MBCshock) # MBC shock time series
 
 ## construct IRFs to mbc shock
-std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
-MBCshock_normalized = MBCshock / std_mbc_shock  # Normalize the shock vector
+#std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
+std_mbc_shock = 1 
+MBCshock_normalized = (MBCshock - np.mean(MBCshock)) / std_mbc_shock  # Normalize the shock vector
 #MBCshock_normalized = MBCshock / 1  # don't Normalize the shock vector
 
 forecast_steps = 120
@@ -117,7 +119,7 @@ shock_adjusted_irfs = pd.DataFrame(shock_adjusted_irfs)
 X_u = shock_adjusted_irfs[[1]]
 X_u = X_u[0:-1:3] # take only the 0th, 3th, 6th, ... observations
 X_u = X_u.reset_index(drop=True)
-X_u = X_u.iloc[0:H]
+#X_u = X_u.iloc[0:H]
 
 # dependent inflation (LHS) and independent inflation (RHS)
 pi_1m = shock_adjusted_irfs[[0]]
@@ -204,14 +206,65 @@ pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
 theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1) 
 theta_Y = theta_Y.iloc[0:H]
 theta_Y = theta_Y.dropna().reset_index(drop=True) # cut at chosen horizon
+theta_Y = theta_Y.rename(columns={0: 'pi_{t+12}^y - pi_{t-1}^y', 1: 'U'})
 pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True) # drop NA
 pi_t_minus_1 = pi_t_minus_1.iloc[0:H].iloc[0:len(theta_Y)]
+pi_t_minus_1 = pi_t_minus_1.rename(columns={0: 'pi_{t}^m - pi_{t-1}^y'})
 
 ### SP-IV
 # Fit the regression model
-model = sm.OLS(pi_t_minus_1, theta_Y).fit()
+model = sm.OLS(-pi_t_minus_1, theta_Y).fit()
 # Print a detailed summary
 print(model.summary())
 
+
+### KLM plot
+
+# Extract coefficients and covariance matrix
+coef = model.params  # [α_hat, β_hat]
+cov_matrix = model.cov_params()  # Covariance matrix
+
+# Step 3: Simulate Sampling Distribution of Coefficients
+n_simulations = 1000
+simulated_coefs = np.random.multivariate_normal(coef, cov_matrix, size=n_simulations)
+
+# Step 4: Compute KLM Statistic for Each Simulation
+def klm_statistic(estimates, mean, cov):
+    diff = estimates - mean
+    return 0.5 * diff.T @ np.linalg.inv(cov) @ diff
+
+klm_values = [klm_statistic(sim, coef, cov_matrix) for sim in simulated_coefs]
+
+# Step 5: Compute KLM Percentiles
+klm_threshold_68 = chi2.ppf(0.68, df=2)
+klm_threshold_90 = chi2.ppf(0.90, df=2)
+klm_threshold_95 = chi2.ppf(0.95, df=2)
+
+# Step 6: Plot β vs α with KLM Percentiles
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.scatter(simulated_coefs[:, 1], simulated_coefs[:, 0],
+            color='skyblue', alpha=0.5, label='Simulated Coefficients')
+ax.scatter(coef[1], coef[0], color='black', marker='x', s=100, label='Estimated Coefficients')
+
+# Add Confidence Ellipses for 68%, 90%, 95%
+def draw_confidence_ellipse(mean, cov, ax, percentile, color, label):
+    vals, vecs = np.linalg.eigh(cov)
+    order = vals.argsort()[::-1]
+    vals, vecs = vals[order], vecs[:, order]
+    width, height = 2 * np.sqrt(vals * chi2.ppf(percentile, df=2))
+    angle = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+    ellipse = Ellipse(xy=mean[::-1], width=width, height=height, angle=angle,
+                      edgecolor=color, facecolor='none', lw=2, label=label)
+    ax.add_patch(ellipse)
+
+draw_confidence_ellipse(coef, cov_matrix, ax, 0.68, 'green', '68% Confidence')
+draw_confidence_ellipse(coef, cov_matrix, ax, 0.90, 'orange', '90% Confidence')
+draw_confidence_ellipse(coef, cov_matrix, ax, 0.95, 'red', '95% Confidence')
+
+plt.title('KLM-Based Confidence Region for OLS Coefficients ($\lambda$ and $\gamma_f$)')
+plt.xlabel('$\lambda$ Coefficient')
+plt.ylabel('$\gamma_f$ Coefficient')
+plt.legend()
+plt.show()
 
 
