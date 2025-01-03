@@ -69,8 +69,10 @@ MBCshock_timeseries = np.dot(var_residuals, MBCshock) # MBC shock time series
 
 ## construct IRFs to mbc shock
 std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
-MBCshock_normalized = MBCshock / std_mbc_shock  # Normalize the shock vector
+exp_mbc_shock = np.mean(MBCshock)
+#MBCshock_normalized = MBCshock / std_mbc_shock  # Normalize the shock vector
 #MBCshock_normalized = MBCshock / 1  # don't Normalize the shock vector
+MBCshock_normalized = (MBCshock - exp_mbc_shock)/1
 
 forecast_steps = 120
 irf = var_results.irf(periods=forecast_steps)  # IRF object
