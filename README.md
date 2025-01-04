@@ -18,7 +18,7 @@ Specifically, the project has two core objectives:
 
 2. **Extension**:  
    - Using the methodology from the same paper, we estimate the **government spending multiplier**.  
-   - Our estimation adapts and applies three distinct methodologies from the following references:  
+   - Our estimation adapts and applies three distinct methodologies to identify the **government spending multiplier** adapted from the following references:  
      - Ramey, V. A. (2011). Identifying government spending shocks: It's all in the timing. The Quarterly Journal of Economics, 126(1), 1–50. https://doi.org/10.1093/qje/qjq008  
      - Ramey, V. A., & Zubairy, S. (2018). Government spending multipliers in good times and in bad: Evidence from US historical data. Journal of Political Economy, 126(2), 850–901. https://doi.org/10.1086/696277 
 
