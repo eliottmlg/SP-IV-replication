@@ -5,6 +5,7 @@ __pycache__/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
+*.ipynb
 
 # Temporary files
 *.tmp

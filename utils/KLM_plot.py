@@ -1,53 +1,91 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import statsmodels.api as sm
 from scipy.stats import chi2
-from matplotlib.patches import Ellipse
 
 
-# Extract coefficients and covariance matrix
-coef = model.params  # [α_hat, β_hat]
-cov_matrix = model.cov_params()  # Covariance matrix
+class KLMConfidenceSet:
+    def __init__(self, model, specification):
+        """
+        Initialize the KLMConfidenceSet object.
 
-# Step 3: Simulate Sampling Distribution of Coefficients
-n_simulations = 1000
-simulated_coefs = np.random.multivariate_normal(coef, cov_matrix, size=n_simulations)
+        Parameters:
+        - model: Fitted model object (e.g., VAR, LP, etc.).
+        - specification: String defining the specification of the model.
+        """
+        self.model = model
+        self.specification = specification
+        self.coef = self.model.params  # Extract coefficients [α_hat, β_hat]
+        self.cov_matrix = self.model.cov_params()  # Covariance matrix
 
-# Step 4: Compute KLM Statistic for Each Simulation
-def klm_statistic(estimates, mean, cov):
-    diff = estimates - mean
-    return 0.5 * diff.T @ np.linalg.inv(cov) @ diff
 
-klm_values = [klm_statistic(sim, coef, cov_matrix) for sim in simulated_coefs]
+        self.gamma_f_range = np.linspace(-0.6, 0.2, 500)
+        self.lambda_range = np.linspace(-0.6, 0.2, 500)
+        self.gamma_f_grid, self.lambda_grid = np.meshgrid(
+            self.gamma_f_range, self.lambda_range
+        )
+        self.critical_values = {
+            "68%": chi2.ppf(0.68, df=2),
+            "90%": chi2.ppf(0.90, df=2),
+            "95%": chi2.ppf(0.95, df=2),
+        }
 
-# Step 5: Compute KLM Percentiles
-klm_threshold_68 = chi2.ppf(0.68, df=2)
-klm_threshold_90 = chi2.ppf(0.90, df=2)
-klm_threshold_95 = chi2.ppf(0.95, df=2)
+    def klm_statistic(self, estimates):
+        """
+        Compute the KLM statistic for a given set of parameter estimates.
 
-# Step 6: Plot β vs α with KLM Percentiles
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.scatter(simulated_coefs[:, 1], simulated_coefs[:, 0],
-            color='skyblue', alpha=0.5, label='Simulated Coefficients')
-ax.scatter(coef[1], coef[0], color='black', marker='x', s=100, label='Estimated Coefficients')
+        Parameters:
+        - estimates: Estimated coefficients [α_hat, β_hat].
 
-# Add Confidence Ellipses for 68%, 90%, 95%
-def draw_confidence_ellipse(mean, cov, ax, percentile, color, label):
-    vals, vecs = np.linalg.eigh(cov)
-    order = vals.argsort()[::-1]
-    vals, vecs = vals[order], vecs[:, order]
-    width, height = 2 * np.sqrt(vals * chi2.ppf(percentile, df=2))
-    angle = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
-    ellipse = Ellipse(xy=mean[::-1], width=width, height=height, angle=angle,
-                      edgecolor=color, facecolor='none', lw=2, label=label)
-    ax.add_patch(ellipse)
+        Returns:
+        - KLM statistic value.
+        """
+        diff = estimates - self.coef
+        return 0.5 * diff.T @ np.linalg.inv(self.cov_matrix) @ diff
+    
+    def compute_res()
+        
+    def compute_klm_grid(
+        self,
+    ):
+        """
+        Compute KLM statistics over a parameter grid.
 
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.68, 'green', '68% Confidence')
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.90, 'orange', '90% Confidence')
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.95, 'red', '95% Confidence')
+        Returns:
+        - klm_grid: Grid of KLM statistics for each combination of γ_f and λ.
+        """
+        klm_grid = np.zeros_like(self.gamma_f_grid)
+        for i in range(self.gamma_f_grid.shape[0]):
+            for j in range(self.gamma_f_grid.shape[1]):
+                simulated_params = np.array(
+                    [self.gamma_f_grid[i, j], self.lambda_grid[i, j]]
+                )
+                klm_grid[i, j] = self.klm_statistic(simulated_params)
+        return klm_grid  # instead compute what depends on the parameter in KLM
 
-plt.title('KLM-Based Confidence Region for OLS Coefficients ($\lambda$ and $\gamma_f$)')
-plt.xlabel('$\lambda$ Coefficient')
-plt.ylabel('$\gamma_f$ Coefficient')
-plt.legend()
-plt.show()
+    def plot_confidence_regions(self):
+        """
+        Plot the confidence regions for the KLM statistic.
+        """
+        klm_grid = self.compute_klm_grid()
+        plt.figure(figsize=(8, 6))
+        for level, crit_val in self.critical_values.items():
+            plt.contour(
+                self.gamma_f_grid,
+                self.lambda_grid,
+                klm_grid,
+                levels=[crit_val],
+                linewidths=1.5,
+                label=f"{level} CI",
+            )
+
+        # Add point estimates
+        plt.scatter(
+            [self.coef[0]], [self.coef[1]], color="black", label="Point Estimate"
+        )
+
+        plt.xlabel(r"$\gamma_f$")
+        plt.ylabel(r"$\lambda$")
+        plt.title("Confidence Sets Based on KLM Statistic")
+        plt.legend()
+        plt.grid()
+        plt.show()

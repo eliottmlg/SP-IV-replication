@@ -5,6 +5,7 @@ Created on Mon Dec 23 16:32:41 2024
 @author: Maxime Coulet, Nina Stizi, Eliott Von-Pine
 """
 
+
 # ==============================================================================
 # Advanced Macroeconometrics - Final assignement
 #
@@ -50,7 +51,7 @@ matlab_dict = {"data": data_matrix, "columns": MBCshock_data.columns.to_list()}
 
 
 # load mbc shock as linear combination of orthogonal shocks from Business Cycle Anatomy
-file_path = "data/MBC_shock.csv"
+file_path = "data/phillips_curve/MBC_shock.csv"
 MBCshock = pd.read_csv(file_path, header=None)
 MBCshock = MBCshock.T
 
@@ -80,15 +81,19 @@ shock_adjusted_irfs = (
     irfs @ MBCshock_normalized.to_numpy()
 )  # Weighted IRFs for the 1-std MBC shock
 
-irf_inflation_to_mbc = shock_adjusted_irfs[:, 0][0:-1:3]
+irf_inflation_to_mbc = shock_adjusted_irfs[:, 0][:-1:3]
 # unemployment
-X_u = shock_adjusted_irfs[:, 1][0:-1:3]  # take only the 0th, 3th, 6th, ... observations
+X_u = shock_adjusted_irfs[:, 1][:-1:3]
 
 # Plot the IRF
 plt.figure(figsize=(12, 8))
 
 plt.subplot(2, 1, 1)
-plt.plot(range(20), irf_inflation_to_mbc[0:20], label="IRF: $\pi^m$ to 1-Std MBC Shock")
+plt.plot(
+    range(20),
+    irf_inflation_to_mbc[:20],
+    label="IRF: $\pi^m$ to 1-Std MBC Shock",
+)
 plt.axhline(0, color="black", linestyle="--", linewidth=0.7)
 plt.xlabel("Time (Periods)")
 plt.ylabel("Response")
@@ -97,7 +102,7 @@ plt.legend()
 plt.grid()
 
 plt.subplot(2, 1, 2)
-plt.plot(range(20), X_u[0:20], label="IRF: U to 1-Std MBC Shock")
+plt.plot(range(20), X_u[:20], label="IRF: U to 1-Std MBC Shock")
 plt.axhline(0, color="black", linestyle="--", linewidth=0.7)
 plt.xlabel("Time (Periods)")
 plt.ylabel("Response")
@@ -116,7 +121,7 @@ shock_adjusted_irfs = pd.DataFrame(shock_adjusted_irfs)
 
 # unemployment
 X_u = shock_adjusted_irfs[[1]]
-X_u = X_u[0:-1:3]  # take only the 0th, 3th, 6th, ... observations
+X_u = X_u[:-1:3]
 X_u = X_u.reset_index(drop=True)
 # X_u = X_u.iloc[0:H]
 
@@ -160,10 +165,7 @@ def compute_difference_12_minus_1(pi_1y, shift_forward=12, shift_backward=1):
         np.nan
     )  # Fill first values with NaN (incomplete data)
 
-    # Compute the difference
-    difference_12_minus_1 = pi_t_plus_12_y - pi_t_minus_1_y
-
-    return difference_12_minus_1
+    return pi_t_plus_12_y - pi_t_minus_1_y
 
 
 # Compute pi_t^m - pi_{t-1}^y
@@ -172,10 +174,7 @@ def compute_difference_t_minus_1(pi_1m, pi_1y):
     pi_t_minus_1_y = np.roll(pi_1y, 1)
     pi_t_minus_1_y[:1] = np.nan  # Fill first value with NaN (incomplete data)
 
-    # Compute the difference
-    difference_t_minus_1 = pi_1m[: len(pi_1y)] - pi_t_minus_1_y
-
-    return difference_t_minus_1
+    return pi_1m[: len(pi_1y)] - pi_t_minus_1_y
 
 
 # Compute differences
@@ -183,8 +182,8 @@ pi_12_minus_1 = compute_difference_12_minus_1(pi_1y)
 pi_t_minus_1 = compute_difference_t_minus_1(pi_1m, pi_1y)
 
 # take only 0th, 3th, 6th, ... horizons
-pi_12_minus_1 = pi_12_minus_1[0:-1:3]
-pi_t_minus_1 = pi_t_minus_1[0:-1:3]
+pi_12_minus_1 = pi_12_minus_1[:-1:3]
+pi_t_minus_1 = pi_t_minus_1[:-1:3]
 
 # Plot results
 plt.figure(figsize=(12, 8))
@@ -214,11 +213,11 @@ pi_12_minus_1 = pd.DataFrame(pi_12_minus_1)
 pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
 
 theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1)
-theta_Y = theta_Y.iloc[0:H]
+theta_Y = theta_Y.iloc[:H]
 theta_Y = theta_Y.dropna().reset_index(drop=True)  # cut at chosen horizon
 theta_Y = theta_Y.rename(columns={0: "pi_{t+12}^y - pi_{t-1}^y", 1: "U"})
 pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True)  # drop NA
-pi_t_minus_1 = pi_t_minus_1.iloc[0:H].iloc[0 : len(theta_Y)]
+pi_t_minus_1 = pi_t_minus_1.iloc[:H].iloc[: len(theta_Y)]
 pi_t_minus_1 = pi_t_minus_1.rename(columns={0: "pi_{t}^m - pi_{t-1}^y"})
 
 ### SP-IV
