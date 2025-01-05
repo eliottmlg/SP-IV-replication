@@ -1,5 +1,5 @@
 clear
-load('C:\Users\eliot\Downloads\118082-V1\online_appendix\results_var/MBC.mat')
+load('C:\Users\eliot\Downloads\118082-V1\online_appendix\results_var/MBC_scale.mat')
 
 aaaIRF = mirf(2,:,:)
 aaaIRF = reshape(aaaIRF,120,6)
@@ -13,5 +13,5 @@ writematrix(aaaIRF,'C:\Users\eliot\Documents\REPOSITORIES\SP-IV-replication\data
 
 MBC_shock = Qmat(2,:,:)
 MBC_shock = median(MBC_shock,2)
-save("C:\Users\eliot\Documents\REPOSITORIES\SP-IV-replication\data/MBC_shock.mat","MBC_shock")
-writematrix(MBC_shock,'C:\Users\eliot\Documents\REPOSITORIES\SP-IV-replication\data/MBC_shock.csv')
+save("C:\Users\eliot\Documents\REPOSITORIES\SP-IV-replication\data/MBC_shock1.mat","MBC_shock")
+writematrix(MBC_shock,'C:\Users\eliot\Documents\REPOSITORIES\SP-IV-replication\data/MBC_shock1.csv')
