@@ -14,6 +14,7 @@ class SP_IV:
         order_dict: dict,
         spec: str,
         horizon: int,
+        identified_shocks: np.ndarray = None,
         var_order: int = 0,
     ):
         """initialize class
@@ -57,6 +58,9 @@ class SP_IV:
         # Matrix
         self.init_matrix(var_order=var_order)
 
+        # Identified Shock
+        self.identified_shocks = identified_shocks
+
     def init_matrix(self, var_order: int):
         if self.spec == "VAR":
             self.X = self.data.iloc[var_order : self.T + var_order].to_numpy().T
@@ -98,24 +102,34 @@ class SP_IV:
 
     def irfs_var(
         self,
-        identified_shocks: np.ndarray = None,
         var_decomp: np.ndarray = None,
         var_order=None,
     ):
         irfs = self.fitted_model.irf(
             periods=self.horizon, var_decomp=var_decomp, var_order=var_order
+        )  # Shape: (forecast_steps, num_variables, num_variables)
+        self.irfs = (
+            irfs @ self.identified_shocks
+            if self.identified_shocks is not None
+            else irfs.orth_irfs
         )
-        irfs = irfs.orth_irfs  # Shape: (forecast_steps, num_variables, num_variables)
-        return irfs @ identified_shocks if identified_shocks is not None else irfs
 
-    def irfs_lp(self, identified_shock: np.array = None):
+    def plot_var_irf(
+        self, impulse: str, figsize: tuple = (5, 20), signif: float = 0.68, orth=True
+    ):
+        if self.identified_shocks is None:
+            self.irfs.plot(orth=orth, impulse=impulse, figsize=figsize, signif=signif)
+        else:
+            
+
+    def irfs_lp(self):
         y_perp, Y_perp, Z_perp = self.perp_matrix()
         norm = sqrtm((Z_perp @ Z_perp.T) / self.T)
         return ((y_perp @ Z_perp.T) / self.T) @ norm, (
             (Y_perp @ Z_perp.T) / self.T
         ) @ norm
 
-    def perp_instruments_var(self, identified_shocks: np.ndarray = None):
+    def perp_instruments_var(self):
 
         residuals = self.fitted_model.resid
         Z_perp = (
@@ -123,12 +137,19 @@ class SP_IV:
             .iloc[self.var_order + 1 : self.var_order + self.T + 1]
             .T
         )  # instruments are the series you add as source of shock for example in Ramey (2011), instruments are war dates and z_t^perp = shock in war_dates, is identified because no other variables impact it and we assume cholesky decomposition.
-        return identified_shocks @ Z_perp if identified_shocks is not None else Z_perp
+        return (
+            self.identified_shocks @ Z_perp
+            if self.identified_shocks is not None
+            else Z_perp
+        )
+
+    def perp_matrix_var(self):
+        pass
 
     def transform_irf(self, function):
         pass
 
-    def regression_irf(self):
+    def regression_irf(self, impulse: str, response: str):
         pass
 
     def get_klm(self):
