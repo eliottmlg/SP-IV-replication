@@ -52,7 +52,7 @@ matlab_dict = {"data": data_matrix, "columns": MBCshock_data.columns.to_list()}
 
 
 # load mbc shock as linear combination of orthogonal shocks from Business Cycle Anatomy
-file_path = "data/MBC_shock1.csv"
+file_path = "data/phillips_curve/MBC_shock1.csv"
 MBCshock = pd.read_csv(file_path, header=None)
 MBCshock = MBCshock.T
 
@@ -174,14 +174,12 @@ def yoy(pi_1m, window=12):
         ]
     )
     annual_irf = (1 + annual_irf) ** (12 / window) - 1
-    pi_1y = pd.DataFrame(annual_irf)
-
-    return pi_1y
+    return pd.DataFrame(annual_irf)
 
 
 # checking function computing annual inflation IRFs from monthly annualised inflation IRFs
 pi_1q = yoy(pi_1m, window=3)
-plt.plot(pi_1q[0:61:3])
+plt.plot(pi_1q[:61:3])
 plt.show()
 # constructing irfs for annual inflation
 pi_1y = yoy(pi_1m)
@@ -204,7 +202,7 @@ def compute_difference_12_minus_1(pi_1y, shift_forward=12, shift_backward=1):
     # Compute the difference
     difference_12_minus_1 = pi_t_plus_12_y - pi_t_minus_1_y
 
-    return difference_12_minus_1[0:-1]
+    return difference_12_minus_1[:-1]
 
 
 # Compute pi_t^m - pi_{t-1}^y
@@ -214,8 +212,6 @@ def compute_difference_t_minus_1(pi_1m, pi_1y):
     pi_t_minus_1_y[:1] = np.nan  # Fill first value with NaN (incomplete data)
 
     return pi_1m[: len(pi_1y)] - pi_t_minus_1_y
-
-    return difference_t_minus_1[0:-1]
 
 
 # Compute differences
@@ -256,18 +252,18 @@ pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
 
 # unemployment
 X_u = shock_adjusted_irfs[[1]]
-X_u = X_u[0:-1:3]  # take only the 0th, 3th, 6th, ... observations
+X_u = X_u[:-1:3]
 X_u = X_u.reset_index(drop=True)
 
 # building explanatory variables
 theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1)
 theta_Y = theta_Y.dropna().reset_index(drop=True)  # cut at chosen horizon
-theta_Y = theta_Y.iloc[0:H]
+theta_Y = theta_Y.iloc[:H]
 theta_Y = theta_Y.rename(columns={0: "pi_{t+12}^y - pi_{t-1}^y", 1: "U"})
 
 # building dependent variable
 pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True)  # drop NA
-pi_t_minus_1 = pi_t_minus_1.iloc[0:H].iloc[0 : len(theta_Y)]
+pi_t_minus_1 = pi_t_minus_1.iloc[:H].iloc[: len(theta_Y)]
 pi_t_minus_1 = pi_t_minus_1.rename(columns={0: "pi_{t}^m - pi_{t-1}^y"})
 
 ### SP-IV
