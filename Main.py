@@ -201,11 +201,13 @@ plt.tight_layout()
 plt.show()
 
 pi_12_minus_1 = pd.DataFrame(pi_12_minus_1)
-pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
+pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)*(-1)
 
 theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1) 
 theta_Y = theta_Y.iloc[0:H]
 theta_Y = theta_Y.dropna().reset_index(drop=True) # cut at chosen horizon
+theta_Y = theta_Y.rename(columns={0: "Gamma_f", 1: "Lambda"})
+
 pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True) # drop NA
 pi_t_minus_1 = pi_t_minus_1.iloc[0:H].iloc[0:len(theta_Y)]
 
@@ -215,5 +217,33 @@ model = sm.OLS(pi_t_minus_1, theta_Y).fit()
 # Print a detailed summary
 print(model.summary())
 
+### KLM Statistic Test
+from statsmodels.sandbox.regression.gmm import IV2SLS
+from scipy.stats import chi2
+
+Y = pi_t_minus_1  # Dependent variable
+
+X = theta_Y["Gamma_f"]  # First-stage endogenous regressor
+
+Z = theta_Y["Lambda"]  # Instrument
+
+# Fit the IV regression model using two-stage least squares (2SLS)
+
+# First-stage regression to obtain residuals
+first_stage = sm.OLS(X, sm.add_constant(Z)).fit()
+X_hat = first_stage.fittedvalues  # Predicted values of X
+residuals = X - X_hat 
+
+# IV 2SLS Model
+iv_model = IV2SLS(Y, X, Z).fit()
+print(iv_model.summary())
+
+# Compute KLM statistic
+KLM_stat = len(Y) * first_stage.rsquared 
+print("KLM Statistic:", KLM_stat)
+
+# Compute p-value using chi-square distribution
+p_value = 1 - chi2.cdf(KLM_stat, len(Z))
+print("p-value:", p_value)
 
 
