@@ -20,6 +20,7 @@ import statsmodels.api as sm
 from statsmodels.tsa.api import VAR
 import utils.prepare_data_main as prep
 from scipy.io import savemat
+from scipy.linalg import cholesky
 
 # import utils.KLM_plot as klmm
 
@@ -47,12 +48,11 @@ matlab_dict = {"data": data_matrix, "columns": MBCshock_data.columns.to_list()}
 # savemat(r'data/MBC.mat', matlab_dict)
 # MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
 
-
 ### REPLIC
 
 
 # load mbc shock as linear combination of orthogonal shocks from Business Cycle Anatomy
-file_path = "data/phillips_curve/MBC_shock.csv"
+file_path = "data/MBC_shock1.csv"
 MBCshock = pd.read_csv(file_path, header=None)
 MBCshock = MBCshock.T
 
@@ -63,7 +63,20 @@ var_results = var_model.fit(lag_order)
 var_residuals = var_results.resid
 sigma_u = var_results.sigma_u  # Covariance matrix of residuals
 
+# MBC 1
 MBCshock_timeseries = np.dot(var_residuals, MBCshock)  # MBC shock time series
+
+cov_u = np.cov(var_residuals.T)  # Covariance matrix of residuals
+cholesky_matrix = cholesky(cov_u, lower=True)  # Lower triangular matrix
+
+# MBC 2: Recover structural shocks
+structural_shocks = np.linalg.inv(cholesky_matrix) @ var_residuals.T
+structural_shocks = structural_shocks.T  # Transpose to match time series format
+
+struct_MBCshock_timeseries = np.dot(
+    structural_shocks, MBCshock
+)  # MBC shock time series
+
 
 ## construct IRFs to mbc shock
 # std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
@@ -120,12 +133,6 @@ H = 12  # chosen horizon to keep in IRFs
 shock_adjusted_irfs = shock_adjusted_irfs.reshape(121, 6)
 shock_adjusted_irfs = pd.DataFrame(shock_adjusted_irfs)
 
-# unemployment
-X_u = shock_adjusted_irfs[[1]]
-X_u = X_u[:-1:3]
-X_u = X_u.reset_index(drop=True)
-# X_u = X_u.iloc[0:H]
-
 # dependent inflation (LHS) and independent inflation (RHS)
 pi_1m = shock_adjusted_irfs[[0]]
 
@@ -152,6 +159,34 @@ def compute_year_over_year(pi_1m, window=12):
 pi_1y = compute_year_over_year(pi_1m)
 
 
+# Function to compute pi_t^{1y} from pi_t^{1m}
+def yoy(pi_1m, window=12):
+    # De-annualize monthly rates (convert to simple monthly growth rates)
+    monthly_growth = (1 + pi_1m) ** (1 / 12) - 1
+    T = len(monthly_growth)
+
+    # Compute year-over-year percent change
+    # Start from the 12th month
+    annual_irf = np.array(
+        [
+            np.sum(monthly_growth[max(0, i - window + 1) : i + 1])
+            for i in range(len(monthly_growth))
+        ]
+    )
+    annual_irf = (1 + annual_irf) ** (12 / window) - 1
+    pi_1y = pd.DataFrame(annual_irf)
+
+    return pi_1y
+
+
+# checking function computing annual inflation IRFs from monthly annualised inflation IRFs
+pi_1q = yoy(pi_1m, window=3)
+plt.plot(pi_1q[0:61:3])
+plt.show()
+# constructing irfs for annual inflation
+pi_1y = yoy(pi_1m)
+
+
 # Compute pi_{t+12}^y - pi_{t-1}^y
 def compute_difference_12_minus_1(pi_1y, shift_forward=12, shift_backward=1):
     # Shift forward for pi_{t+12}^y
@@ -166,7 +201,10 @@ def compute_difference_12_minus_1(pi_1y, shift_forward=12, shift_backward=1):
         np.nan
     )  # Fill first values with NaN (incomplete data)
 
-    return pi_t_plus_12_y - pi_t_minus_1_y
+    # Compute the difference
+    difference_12_minus_1 = pi_t_plus_12_y - pi_t_minus_1_y
+
+    return difference_12_minus_1[0:-1]
 
 
 # Compute pi_t^m - pi_{t-1}^y
@@ -177,14 +215,16 @@ def compute_difference_t_minus_1(pi_1m, pi_1y):
 
     return pi_1m[: len(pi_1y)] - pi_t_minus_1_y
 
+    return difference_t_minus_1[0:-1]
+
 
 # Compute differences
 pi_12_minus_1 = compute_difference_12_minus_1(pi_1y)
 pi_t_minus_1 = compute_difference_t_minus_1(pi_1m, pi_1y)
 
 # take only 0th, 3th, 6th, ... horizons
-pi_12_minus_1 = pi_12_minus_1[:-1:3]
-pi_t_minus_1 = pi_t_minus_1[:-1:3]
+pi_12_minus_1 = pi_12_minus_1[1:-1:3]
+pi_t_minus_1 = pi_t_minus_1[1:-1:3]
 
 # Plot results
 plt.figure(figsize=(12, 8))
@@ -199,7 +239,7 @@ plt.legend()
 plt.grid()
 
 plt.subplot(2, 1, 2)
-plt.plot(pi_t_minus_1, label="$\pi_{t}^m - \pi_{t-1}^y$")
+plt.plot(-pi_t_minus_1, label="$\pi_{t}^m - \pi_{t-1}^y$")
 plt.axhline(0, color="red", linestyle="--", linewidth=0.8)
 plt.title("$\pi_{t}^m - \pi_{t-1}^y$")
 plt.xlabel("Time")
@@ -213,85 +253,25 @@ plt.show()
 pi_12_minus_1 = pd.DataFrame(pi_12_minus_1)
 pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
 
+
+# unemployment
+X_u = shock_adjusted_irfs[[1]]
+X_u = X_u[0:-1:3]  # take only the 0th, 3th, 6th, ... observations
+X_u = X_u.reset_index(drop=True)
+
+# building explanatory variables
 theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1)
-theta_Y = theta_Y.iloc[:H]
 theta_Y = theta_Y.dropna().reset_index(drop=True)  # cut at chosen horizon
+theta_Y = theta_Y.iloc[0:H]
 theta_Y = theta_Y.rename(columns={0: "pi_{t+12}^y - pi_{t-1}^y", 1: "U"})
+
+# building dependent variable
 pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True)  # drop NA
-pi_t_minus_1 = pi_t_minus_1.iloc[:H].iloc[: len(theta_Y)]
+pi_t_minus_1 = pi_t_minus_1.iloc[0:H].iloc[0 : len(theta_Y)]
 pi_t_minus_1 = pi_t_minus_1.rename(columns={0: "pi_{t}^m - pi_{t-1}^y"})
 
 ### SP-IV
 # Fit the regression model
-model = sm.OLS(-pi_t_minus_1, theta_Y).fit()
+model = sm.OLS(pi_t_minus_1, theta_Y).fit()
 # Print a detailed summary
 print(model.summary())
-
-
-### KLM plot
-
-# Extract coefficients and covariance matrix
-coef = model.params  # [α_hat, β_hat]
-cov_matrix = model.cov_params()  # Covariance matrix
-
-# Step 3: Simulate Sampling Distribution of Coefficients
-n_simulations = 1000
-simulated_coefs = np.random.multivariate_normal(coef, cov_matrix, size=n_simulations)
-
-
-# Step 4: Compute KLM Statistic for Each Simulation
-def klm_statistic(estimates, mean, cov):
-    diff = estimates - mean
-    return 0.5 * diff.T @ np.linalg.inv(cov) @ diff
-
-
-klm_values = [klm_statistic(sim, coef, cov_matrix) for sim in simulated_coefs]
-
-# Step 5: Compute KLM Percentiles
-klm_threshold_68 = chi2.ppf(0.68, df=2)
-klm_threshold_90 = chi2.ppf(0.90, df=2)
-klm_threshold_95 = chi2.ppf(0.95, df=2)
-
-# Step 6: Plot β vs α with KLM Percentiles
-fig, ax = plt.subplots(figsize=(10, 6))
-ax.scatter(
-    simulated_coefs[:, 1],
-    simulated_coefs[:, 0],
-    color="skyblue",
-    alpha=0.5,
-    label="Simulated Coefficients",
-)
-ax.scatter(
-    coef[1], coef[0], color="black", marker="x", s=100, label="Estimated Coefficients"
-)
-
-
-# Add Confidence Ellipses for 68%, 90%, 95%
-def draw_confidence_ellipse(mean, cov, ax, percentile, color, label):
-    vals, vecs = np.linalg.eigh(cov)
-    order = vals.argsort()[::-1]
-    vals, vecs = vals[order], vecs[:, order]
-    width, height = 2 * np.sqrt(vals * chi2.ppf(percentile, df=2))
-    angle = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
-    ellipse = Ellipse(
-        xy=mean[::-1],
-        width=width,
-        height=height,
-        angle=angle,
-        edgecolor=color,
-        facecolor="none",
-        lw=2,
-        label=label,
-    )
-    ax.add_patch(ellipse)
-
-
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.68, "green", "68% Confidence")
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.90, "orange", "90% Confidence")
-draw_confidence_ellipse(coef, cov_matrix, ax, 0.95, "red", "95% Confidence")
-
-plt.title("KLM-Based Confidence Region for OLS Coefficients ($\lambda$ and $\gamma_f$)")
-plt.xlabel("$\lambda$ Coefficient")
-plt.ylabel("$\gamma_f$ Coefficient")
-plt.legend()
-plt.show()
