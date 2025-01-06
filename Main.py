@@ -19,7 +19,7 @@ import statsmodels.api as sm
 from statsmodels.tsa.api import VAR
 import prepare_data as prep
 from scipy.io import savemat
-import KLM_plot as klmm
+from scipy.linalg import cholesky
 
 
 
@@ -49,8 +49,6 @@ matlab_dict = {
 #savemat(r'data/MBC.mat', matlab_dict)
 #MBCshock_data.to_csv(r'data/mbc_data.csv',index=False,header=False)
 
-
-
 ### REPLIC
 
 
@@ -66,7 +64,18 @@ var_results = var_model.fit(lag_order)
 var_residuals = var_results.resid
 sigma_u = var_results.sigma_u  # Covariance matrix of residuals
 
+# MBC 1
 MBCshock_timeseries = np.dot(var_residuals, MBCshock) # MBC shock time series
+
+cov_u = np.cov(var_residuals.T)  # Covariance matrix of residuals
+cholesky_matrix = cholesky(cov_u, lower=True)  # Lower triangular matrix
+
+#MBC 2: Recover structural shocks
+structural_shocks = np.linalg.inv(cholesky_matrix) @ var_residuals.T
+structural_shocks = structural_shocks.T  # Transpose to match time series format
+
+struct_MBCshock_timeseries = np.dot(structural_shocks, MBCshock) # MBC shock time series
+
 
 ## construct IRFs to mbc shock
 #std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
