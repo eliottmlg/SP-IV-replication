@@ -92,9 +92,10 @@ class SP_IV:
     def perp_matrix_lp(self):
         return self.y_H @ self.M_X, self.Y_H @ self.M_X, self.Z @ self.M_X
 
-    def init_var(self):
+    def init_var(self, var_list: list = None):
+        data = self.data if var_list is None else self.data[var_list]
         self.model = VAR(
-            self.data.iloc[: self.T + self.var_order],
+            data.iloc[: self.T + self.var_order],
         )
 
     def fit_var(self, order: int = None, trend: str = "n"):
@@ -119,8 +120,6 @@ class SP_IV:
     ):
         if self.identified_shocks is None:
             self.irfs.plot(orth=orth, impulse=impulse, figsize=figsize, signif=signif)
-        else:
-            
 
     def irfs_lp(self):
         y_perp, Y_perp, Z_perp = self.perp_matrix()
@@ -141,7 +140,7 @@ class SP_IV:
             self.identified_shocks @ Z_perp
             if self.identified_shocks is not None
             else Z_perp
-        )
+        )  # TODO what is Z in the MBC shocks, since a shock already orthonal so Z = Z_perp and Z = MBC_shock or use the serie used to identify in the MBC, unemployment no The MBC shock itself, as identified in the VAR, is the proxy (or instrument) used in the estimation of the Phillips curve. ?
 
     def perp_matrix_var(self):
         pass
