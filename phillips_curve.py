@@ -18,7 +18,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.tsa.api import VAR
-import utils.prepare_data_main as prep
+import utils.preprocessing as prep
 from scipy.io import savemat
 from scipy.linalg import cholesky
 

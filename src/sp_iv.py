@@ -116,9 +116,7 @@ class SP_IV:
             var_list (list, optional): List of variables to include in the VAR. Defaults to None.
         """
         data = self.data if var_list is None else self.data[var_list]
-        self.var = VAR(
-            data.iloc[: self.T + self.var_order],
-        )
+        self.var = VAR(data)
 
     def fit_var(self, order: int = None, trend: str = "n"):
         """Fits the VAR model.
@@ -140,9 +138,7 @@ class SP_IV:
             var_decomp (np.ndarray, optional): Variance decomposition matrix. Defaults to None.
             var_order (optional): order of the decomposition matrix. Defaults to None.
         """
-        irfs = self.fitted_var.irf(
-            periods=self.horizon, var_decomp=var_decomp, var_order=var_order
-        )
+        irfs = self.fitted_var.irf(periods=self.horizon)
         self.irfs = (
             irfs.orth_irfs @ self.identified_shocks
             if self.identified_shocks is not None
@@ -176,25 +172,49 @@ class SP_IV:
 
     def perp_matrix_var(self):
         """Calculates the perpendicular matrices for VAR."""
-        self.fitted_var.forecats
-        pass
+        y_H_perp = np.zeros((self.horizon, self.T))
+        Y_H_perp = np.zeros((self.horizon * self.N_Y, self.T))
+        for t in range(self.T):
+            X_t = self.data.iloc[: t + self.var_order].values[::-1]
+            for h in range(1, self.horizon + 1):
+                if t + h < self.num_obs:
+                    forecast = self.fitted_var.forecast(y=X_t, steps=h)[-1]
+                    error = self.data.iloc[t + h] - forecast
+                    y_H_perp[h - 1, t] = error[self.target]  # y_t error
+                    Y_H_perp[(h - 1) * self.N_Y : h * self.N_Y, t] = error[
+                        self.regressors
+                    ]  # Y_t error
 
-    def transform_irf(self, function):
+        return y_H_perp, Y_H_perp
+
+    def get_irfs(self):
         """Transforms the impulse response functions.
 
         Args:
             function: Transformation function.
         """
-        pass
+        return self.irfs
 
-    def regression_irf(self, impulse: str, response: list, keep_moments: list):
+    def set_irfs(self, irfs):
+        self.irfs = irfs
+
+    def regression_irf(self, impulse_index: int, keep_moments: list):
         """Performs regression on the impulse response functions.
 
         Args:
             impulse (str): Name of the impulse variable.
             response (str): Name of the response variable.
         """
-        pass
+        y = self.irfs[:, list(self.order_dict.keys()).index(self.target), impulse_index]
+        Y = np.hstack(
+            [
+                self.irfs[
+                    :, list(self.order_dict.keys()).index(regressor), impulse_index
+                ]
+                for regressor in self.regressors
+            ]
+        )
+        self.reg = sm.OLS(y, Y).fit()
 
     def get_klm(self):
         """Calculates the KLM statistic."""
