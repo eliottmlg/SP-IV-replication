@@ -17,13 +17,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
+import statsmodels.formula.api as smf
 from statsmodels.tsa.api import VAR
 import utils.preprocessing as prep
 from scipy.io import savemat
-from scipy.linalg import cholesky
+from scipy.linalg import sqrtm, cholesky
+from scipy.stats import chi2
 
-# import utils.KLM_plot as klmm
-
+from src.sp_iv import SP_IV
 
 ### Constructing MBC shock
 
@@ -50,63 +51,130 @@ matlab_dict = {"data": data_matrix, "columns": MBCshock_data.columns.to_list()}
 
 ### REPLIC
 
-
 # load mbc shock as linear combination of orthogonal shocks from Business Cycle Anatomy
-file_path = "data/phillips_curve/MBC_shock1.csv"
+file_path = "data/phillips_curve/MBC_shock2.csv"
 MBCshock = pd.read_csv(file_path, header=None)
+
 MBCshock = MBCshock.T
 
-# Fit a VAR model
-var_model = VAR(MBCshock_data)
-lag_order = 6
-var_results = var_model.fit(lag_order)
-var_residuals = var_results.resid
-sigma_u = var_results.sigma_u  # Covariance matrix of residuals
+MBCshock_data["core_CPI_yoy"] = (
+    MBCshock_data["core_CPI_annualised_percent_change"]
+    .rolling(window=12)
+    .apply(prep.compute_year_on_year, args=(100,))
+)
+MBCshock_data["core_CPI_yoy_lagged"] = MBCshock_data["core_CPI_yoy"].shift(1).fillna(0)
+MBCshock_data["core_CPI_yoy_forward"] = MBCshock_data["core_CPI_yoy"].shift(-12)
+MBCshock_data["y"] = (
+    MBCshock_data["core_CPI_annualised_percent_change"]
+    - MBCshock_data["core_CPI_yoy_lagged"]
+)
+MBCshock_data["gamma_f"] = (
+    MBCshock_data["core_CPI_yoy_forward"] - MBCshock_data["core_CPI_yoy_lagged"]
+)
 
-# MBC 1
-MBCshock_timeseries = np.dot(var_residuals, MBCshock)  # MBC shock time series
+MBCshock_data.dropna(axis=0, inplace=True)
 
-cov_u = np.cov(var_residuals.T)  # Covariance matrix of residuals
-cholesky_matrix = cholesky(cov_u, lower=True)  # Lower triangular matrix
+order_dict = {
+    "core_CPI_annualised_percent_change": ["target", "instruments"],
+    "unemployment_rate": ["regressors", "instruments"],
+    "log_industrial_production": ["controls", "instruments"],
+    "PPI_commodity": ["controls", "instruments"],
+    "10Y_Treasury_rate": ["controls", "instruments"],
+    "3M_Treasury_rate": ["controls", "instruments"],
+}
 
-# MBC 2: Recover structural shocks
-structural_shocks = np.linalg.inv(cholesky_matrix) @ var_residuals.T
-structural_shocks = structural_shocks.T  # Transpose to match time series format
+# Init model and irfs
+horizons = range(0, 48, 3)
+horizon = max(horizons) + 1
+sp_iv = SP_IV(
+    MBCshock_data[list(order_dict.keys())],
+    order_dict=order_dict,
+    spec="VAR",
+    horizons=horizons,
+    identified_shocks=MBCshock.to_numpy(),
+    var_order=6,
+    burn_in=12,
+)
+sp_iv.init_var()
+sp_iv.fit_var(6, trend="n")
+sp_iv.irfs_var()
+sp_iv.instruments_var()
 
-struct_MBCshock_timeseries = np.dot(
-    structural_shocks, MBCshock
-)  # MBC shock time series
+# Setup
+H = 12
+N_Y = 2
+N_z = 1
+N_X = 36
+X, Z = sp_iv.X, sp_iv.Z
+M_X = sp_iv.M_X
+T = sp_iv.T
+R = np.kron(np.eye(2), np.eye(H).flatten())
+
+# First Stage Errors
+Y_H = np.column_stack(
+    [
+        MBCshock_data[["unemployment_rate", "gamma_f"]]
+        .iloc[h + sp_iv.start_time + 1 : h + sp_iv.T + sp_iv.start_time + 1]
+        .to_numpy()
+        for h in sp_iv.horizons[:12]
+    ]
+).T
+XZ = XZ = np.vstack([X, Z])
+PXZ = XZ.T @ np.linalg.inv(XZ @ XZ.T) @ XZ
+MXZ = np.eye(T) - PXZ
+first_stage_error = MXZ @ Y_H.T
+
+# Forecast
+cpi_fcst, u_fcst = sp_iv.h_ahead_forecast_var(0, 1, 11)
+u_fcst = u_fcst[:, 11:]
+df_cpi_fcst = pd.DataFrame(data=cpi_fcst.T).iloc[11:]
+df_cpi_yoy_fcst = (
+    pd.DataFrame(data=cpi_fcst.T)
+    .rolling(window=12)
+    .apply(prep.compute_year_on_year, args=(100,))
+    .dropna(axis=0)
+)
+y_H_perp = (
+    (df_cpi_fcst - df_cpi_yoy_fcst.shift(1).fillna(0)).to_numpy().T[horizons[:-1]][:H]
+)
+cpi_H_perp = (
+    (df_cpi_yoy_fcst.shift(-12).ffill() - df_cpi_yoy_fcst.shift(1).fillna(0))
+    .to_numpy()
+    .T[horizons[:-1]][:H]
+)
+u_H_perp = u_fcst[horizons[:-1]][:H]
 
 
-## construct IRFs to mbc shock
-# std_mbc_shock = np.sqrt(np.dot(np.dot(MBCshock.T, sigma_u), MBCshock))  # Standard deviation of MBC
-std_mbc_shock = 1
-MBCshock_normalized = (
-    MBCshock - np.mean(MBCshock)
-) / std_mbc_shock  # Normalize the shock vector
-# MBCshock_normalized = MBCshock / 1  # don't Normalize the shock vector
-
-forecast_steps = 120
-irf = var_results.irf(periods=forecast_steps)  # IRF object
-irfs = irf.orth_irfs  # Shape: (forecast_steps, num_variables, num_variables)
-
-# Adjust IRFs for the one-standard-deviation MBC shock
-shock_adjusted_irfs = (
-    irfs @ MBCshock_normalized.to_numpy()
-)  # Weighted IRFs for the 1-std MBC shock
-
-irf_inflation_to_mbc = shock_adjusted_irfs[:, 0][:-1:3]
-# unemployment
-X_u = shock_adjusted_irfs[:, 1][:-1:3]
+# IRFs
+irfs = pd.DataFrame(
+    data=sp_iv.irfs.reshape(horizon, 6),
+    columns=[
+        "core_CPI_annualised_percent_change",
+        "unemployment_rate",
+        "log_industrial_production",
+        "PPI_commodity",
+        "10Y_Treasury_rate",
+        "3M_Treasury_rate",
+    ],
+)
+irfs["core_CPI_yoy"] = (
+    irfs["core_CPI_annualised_percent_change"]
+    .rolling(window=12, min_periods=1)
+    .apply(prep.compute_year_on_year)
+)
+irfs["core_CPI_yoy_lagged"] = irfs["core_CPI_yoy"].shift(1).fillna(0)
+irfs["core_CPI_yoy_forward"] = irfs["core_CPI_yoy"].shift(-12)
+irfs["y"] = irfs["core_CPI_annualised_percent_change"] - irfs["core_CPI_yoy_lagged"]
+irfs["gamma_f"] = irfs["core_CPI_yoy_forward"] - irfs["core_CPI_yoy_lagged"]
+irfs_q = irfs[irfs.index % 3 == 0]
 
 # Plot the IRF
-plt.figure(figsize=(12, 8))
+plt.figure(figsize=(12, 24))
 
-plt.subplot(2, 1, 1)
+plt.subplot(4, 1, 1)
 plt.plot(
-    range(20),
-    irf_inflation_to_mbc[:20],
-    label="IRF: $\pi^m$ to 1-Std MBC Shock",
+    irfs_q["core_CPI_annualised_percent_change"],
+    label=r"IRF: $\pi^{1m}$ to 1-Std MBC Shock",
 )
 plt.axhline(0, color="black", linestyle="--", linewidth=0.7)
 plt.xlabel("Time (Periods)")
@@ -115,8 +183,11 @@ plt.title("IRF of Inflation to One-Standard-Deviation MBC Shock")
 plt.legend()
 plt.grid()
 
-plt.subplot(2, 1, 2)
-plt.plot(range(20), X_u[:20], label="IRF: U to 1-Std MBC Shock")
+plt.subplot(4, 1, 2)
+plt.plot(
+    irfs_q["unemployment_rate"],
+    label="IRF: U to 1-Std MBC Shock",
+)
 plt.axhline(0, color="black", linestyle="--", linewidth=0.7)
 plt.xlabel("Time (Periods)")
 plt.ylabel("Response")
@@ -124,150 +195,130 @@ plt.title("IRF of Unemployment to One-Standard-Deviation MBC Shock")
 plt.legend()
 plt.grid()
 
+plt.subplot(4, 1, 4)
+plt.plot(irfs["gamma_f"], label=r"$\pi_{t+12}^{1y} - \pi_{t-1}^{1y}$")
+plt.axhline(0, color="red", linestyle="--", linewidth=0.8)
+plt.title(r"$\pi_{t+12}^y - \pi_{t-1}^y$")
+plt.xlabel("Time")
+plt.ylabel("Difference")
+plt.legend()
+plt.grid()
+
+plt.subplot(4, 1, 3)
+plt.plot(irfs["y"], label=r"$\pi_{t}^{1m} - \pi_{t-1}^{1y}$")
+plt.axhline(0, color="red", linestyle="--", linewidth=0.8)
+plt.title(r"$\pi_{t}^{1m} - \pi_{t-1}^{1y}$")
+plt.xlabel("Time")
+plt.ylabel("Difference")
+plt.legend()
+plt.grid()
+
 plt.tight_layout()
 plt.show()
 
-### Data formatting for SP-IV
-H = 12  # chosen horizon to keep in IRFs
+reg = smf.ols(
+    "y ~ gamma_f + unemployment_rate - 1",
+    data=irfs_q.iloc[:12],
+).fit()
+print(reg.summary())
 
-shock_adjusted_irfs = shock_adjusted_irfs.reshape(121, 6)
-shock_adjusted_irfs = pd.DataFrame(shock_adjusted_irfs)
-
-# dependent inflation (LHS) and independent inflation (RHS)
-pi_1m = shock_adjusted_irfs[[0]]
-
-
-# Function to compute pi_t^{1y} from pi_t^{1m}
-def compute_year_over_year(pi_1m, window=12):
-    # De-annualize monthly rates (convert to simple monthly growth rates)
-    monthly_growth = (1 + pi_1m) ** (1 / 12) - 1
-    T = len(monthly_growth)
-    pi_1y = []
-
-    # Compute year-over-year percent change
-    for t in range(window - 1, T):  # Start from the 12th month
-        cumulative_growth = np.prod(
-            1 + monthly_growth[t - window + 1 : t + 1]
-        )  # Cumulative product
-        year_over_year = cumulative_growth - 1  # Convert to percent
-        pi_1y.append(year_over_year)
-
-    return np.array(pi_1y)
+# KLM
+ZM = np.linalg.inv(sqrtm((Z @ M_X @ Z.T) / T)) @ Z @ M_X
+Theta_Y = np.hstack(
+    [
+        irfs["gamma_f"].iloc[horizons].to_numpy()[:H],
+        irfs["unemployment_rate"].iloc[horizons].to_numpy()[:H],
+    ]
+).reshape(N_Y * H, 1)
+Theta_y = irfs["y"].iloc[horizons].to_numpy()[:H].reshape(H, N_z)
+YP = Theta_Y @ ZM
+Y_H_perp = np.vstack([cpi_H_perp, u_H_perp])
 
 
-# Compute pi_t^{1y}
-pi_1y = compute_year_over_year(pi_1m)
+def u1(b: np.ndarray) -> np.ndarray:
+    """_summary_
+
+    Args:
+        b (np.ndarray): Loadings matrix of shape N_Y x 1
+
+    Returns:
+        np.ndarray: residual of the second stage SP-IV of shape H x T
+    """
+    return y_H_perp - np.kron(b.T, np.eye(H)) @ Y_H_perp
 
 
-# Function to compute pi_t^{1y} from pi_t^{1m}
-def yoy(pi_1m, window=12):
-    # De-annualize monthly rates (convert to simple monthly growth rates)
-    monthly_growth = (1 + pi_1m) ** (1 / 12) - 1
-    T = len(monthly_growth)
+def u2(b: np.ndarray) -> np.ndarray:
+    """_summary_
 
-    # Compute year-over-year percent change
-    # Start from the 12th month
-    annual_irf = np.array(
-        [
-            np.sum(monthly_growth[max(0, i - window + 1) : i + 1])
-            for i in range(len(monthly_growth))
-        ]
+    Args:
+        b (np.ndarray): Loadings matrix of shape N_Y x 1
+
+    Returns:
+        np.ndarray: residual of the IRF regression SP-IV of shape H x 1
+    """
+    return (Theta_y - np.kron(b.T, np.eye(H)) @ Theta_Y) @ ZM
+
+
+def KLM(b: np.ndarray) -> np.ndarray:
+    Sigma_inv = np.linalg.inv((u1(b) - u2(b)) @ u1(b).T)
+    Y_tilde = YP - first_stage_error.T @ (u1(b) - u2(b)).T @ np.linalg.inv(
+        (u1(b) - u2(b)) @ (u1(b) - u2(b)).T
+    ) @ u2(b)
+    term1 = (Sigma_inv @ u1(b) @ Y_tilde.T).flatten().T @ R.T
+    term2 = (
+        R @ np.kron(Y_tilde @ Y_tilde.T, Sigma_inv @ u1(b) @ u1(b).T @ Sigma_inv) @ R.T
     )
-    annual_irf = (1 + annual_irf) ** (12 / window) - 1
-    return pd.DataFrame(annual_irf)
+    term3 = R @ (Sigma_inv @ u1(b) @ Y_tilde.T).flatten().T
+    return (T - N_X - N_z) * term1 @ np.linalg.inv(term2) @ term3
 
 
-# checking function computing annual inflation IRFs from monthly annualised inflation IRFs
-pi_1q = yoy(pi_1m, window=3)
-plt.plot(pi_1q[:61:3])
-plt.show()
-# constructing irfs for annual inflation
-pi_1y = yoy(pi_1m)
+u = u1(np.array([0.6, -0.14]))
 
 
-# Compute pi_{t+12}^y - pi_{t-1}^y
-def compute_difference_12_minus_1(pi_1y, shift_forward=12, shift_backward=1):
-    # Shift forward for pi_{t+12}^y
-    pi_t_plus_12_y = np.roll(pi_1y, -shift_forward)
-    pi_t_plus_12_y[-shift_forward:] = (
-        np.nan
-    )  # Fill last values with NaN (incomplete data)
-
-    # Shift backward for pi_{t-1}^y
-    pi_t_minus_1_y = np.roll(pi_1y, shift_backward)
-    pi_t_minus_1_y[:shift_backward] = (
-        np.nan
-    )  # Fill first values with NaN (incomplete data)
-
-    # Compute the difference
-    difference_12_minus_1 = pi_t_plus_12_y - pi_t_minus_1_y
-
-    return difference_12_minus_1[:-1]
+critical_values = {
+    "68%": chi2.ppf(0.68, df=2),
+    "90%": chi2.ppf(0.90, df=2),
+    "95%": chi2.ppf(0.95, df=2),
+}
 
 
-# Compute pi_t^m - pi_{t-1}^y
-def compute_difference_t_minus_1(pi_1m, pi_1y):
-    # Shift backward for pi_{t-1}^y
-    pi_t_minus_1_y = np.roll(pi_1y, 1)
-    pi_t_minus_1_y[:1] = np.nan  # Fill first value with NaN (incomplete data)
+def compute_klm_grid(gamma_f_grid, lambda_grid):
+    """
+    Compute KLM statistics over a parameter grid.
 
-    return pi_1m[: len(pi_1y)] - pi_t_minus_1_y
-
-
-# Compute differences
-pi_12_minus_1 = compute_difference_12_minus_1(pi_1y)
-pi_t_minus_1 = compute_difference_t_minus_1(pi_1m, pi_1y)
-
-# take only 0th, 3th, 6th, ... horizons
-pi_12_minus_1 = pi_12_minus_1[1:-1:3]
-pi_t_minus_1 = pi_t_minus_1[1:-1:3]
-
-# Plot results
-plt.figure(figsize=(12, 8))
-
-plt.subplot(2, 1, 1)
-plt.plot(pi_12_minus_1, label="$\pi_{t+12}^y - \pi_{t-1}^y$")
-plt.axhline(0, color="red", linestyle="--", linewidth=0.8)
-plt.title("$\pi_{t+12}^y - \pi_{t-1}^y$")
-plt.xlabel("Time")
-plt.ylabel("Difference")
-plt.legend()
-plt.grid()
-
-plt.subplot(2, 1, 2)
-plt.plot(-pi_t_minus_1, label="$\pi_{t}^m - \pi_{t-1}^y$")
-plt.axhline(0, color="red", linestyle="--", linewidth=0.8)
-plt.title("$\pi_{t}^m - \pi_{t-1}^y$")
-plt.xlabel("Time")
-plt.ylabel("Difference")
-plt.legend()
-plt.grid()
-
-plt.tight_layout()
-plt.show()
-
-pi_12_minus_1 = pd.DataFrame(pi_12_minus_1)
-pi_t_minus_1 = pd.DataFrame(pi_t_minus_1)
+    Returns:
+    - klm_grid: Grid of KLM statistics for each combination of γ_f and λ.
+    """
+    klm_grid = np.zeros_like(gamma_f_grid)
+    for i in range(gamma_f_grid.shape[0]):
+        for j in range(gamma_f_grid.shape[1]):
+            simulated_params = np.array([gamma_f_grid[i, j], lambda_grid[i, j]])
+            klm_grid[i, j] = KLM(simulated_params)
+    return klm_grid  # instead compute what depends on the parameter in KLM
 
 
-# unemployment
-X_u = shock_adjusted_irfs[[1]]
-X_u = X_u[:-1:3]
-X_u = X_u.reset_index(drop=True)
+def plot_confidence_regions(gamma_f_grid, lambda_grid, coef):
+    """
+    Plot the confidence regions for the KLM statistic.
+    """
+    klm_grid = compute_klm_grid(gamma_f_grid, lambda_grid)
+    plt.figure(figsize=(8, 6))
+    for level, crit_val in critical_values.items():
+        plt.contour(
+            gamma_f_grid,
+            lambda_grid,
+            klm_grid,
+            levels=[crit_val],
+            linewidths=1.5,
+            label=f"{level} CI",
+        )
 
-# building explanatory variables
-theta_Y = pd.concat([pi_12_minus_1, X_u], axis=1)
-theta_Y = theta_Y.dropna().reset_index(drop=True)  # cut at chosen horizon
-theta_Y = theta_Y.iloc[:H]
-theta_Y = theta_Y.rename(columns={0: "pi_{t+12}^y - pi_{t-1}^y", 1: "U"})
+    # Add point estimates
+    plt.scatter([coef[0]], [coef[1]], color="black", label="Point Estimate")
 
-# building dependent variable
-pi_t_minus_1 = pi_t_minus_1.dropna().reset_index(drop=True)  # drop NA
-pi_t_minus_1 = pi_t_minus_1.iloc[:H].iloc[: len(theta_Y)]
-pi_t_minus_1 = pi_t_minus_1.rename(columns={0: "pi_{t}^m - pi_{t-1}^y"})
-
-### SP-IV
-# Fit the regression model
-model = sm.OLS(pi_t_minus_1, theta_Y).fit()
-# Print a detailed summary
-print(model.summary())
+    plt.xlabel(r"$\gamma_f$")
+    plt.ylabel(r"$\lambda$")
+    plt.title("Confidence Sets Based on KLM Statistic")
+    plt.legend()
+    plt.grid()
+    plt.show()
