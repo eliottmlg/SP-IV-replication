@@ -21,9 +21,10 @@ class SP_IV:
         data: pd.DataFrame,
         order_dict: dict,
         spec: str,
-        horizon: int,
+        horizons: range,
         identified_shocks: np.ndarray = None,
         var_order: int = 0,
+        burn_in: int = 0,
     ):
         """Initializes the SP_IV class.
 
@@ -54,12 +55,15 @@ class SP_IV:
 
         # Spec
         self.spec = spec
-        self.horizon = horizon
+        self.horizons = horizons
+        self.horizon = max(horizons)
         self.var_order = var_order
+        self.burn_in = burn_in
 
         # Shape
         self.num_obs, self.num_var = self.data.shape
-        self.T = self.num_obs - 1 - self.horizon - self.var_order
+        self.start_time = self.var_order + self.burn_in
+        self.T = self.num_obs - 1 - self.horizon - self.var_order - self.burn_in
 
         self.N_z = len(self.instruments)
         self.N_Y = len(self.regressors)
@@ -78,36 +82,50 @@ class SP_IV:
             var_order (int): VAR order.
         """
         if self.spec == "VAR":
-            self.X = self.data.iloc[var_order : self.T + var_order].to_numpy().T
+            self.X = np.vstack(
+                [
+                    self.data.iloc[
+                        self.start_time - lag : self.T + self.start_time - lag
+                    ]
+                    .to_numpy()
+                    .T
+                    for lag in range(var_order)
+                ]
+            )
         else:
             self.X = self.data[self.controls].iloc[: self.T].to_numpy().T
             self.Z = self.data[self.instruments].iloc[1 : self.T + 1].to_numpy().T
         self.y_H = np.column_stack(
             [
-                self.data[self.target].iloc[i : i + self.T].to_numpy()
-                for i in range(1, self.horizon + 1)
+                self.data[self.target]
+                .iloc[h + self.start_time + 1 : h + self.T + self.start_time + 1]
+                .to_numpy()
+                for h in self.horizons
             ]
         ).T
         self.Y_H = np.hstack(
             [
                 np.column_stack(
                     [
-                        self.data[col].iloc[i : i + self.T].to_numpy()
-                        for i in range(1, self.horizon + 1)
+                        self.data[col]
+                        .iloc[
+                            h + self.start_time + 1 : h + self.T + self.start_time + 1
+                        ]
+                        .to_numpy()
+                        for h in self.horizons
                     ]
                 )
                 for col in self.regressors
             ]
         ).T
-
-    def proj_controls(self):
-        """Calculates the projection matrix for controls."""
-        inv = np.linalg.inv(self.X @ self.X.T)
-        self.M_X = np.eye(self.T) - self.X.T @ inv @ self.X
+        inv_X = np.linalg.inv(self.X @ self.X.T)
+        self.M_X = np.eye(self.T) - self.X.T @ inv_X @ self.X
 
     def perp_matrix_lp(self):
         """Calculates the perpendicular matrices for LP-IV."""
-        return self.y_H @ self.M_X, self.Y_H @ self.M_X, self.Z @ self.M_X
+        self.y_perp = self.y_H @ self.M_X
+        self.Y_perp = self.Y_H @ self.M_X
+        self.Z_perp = self.Z @ self.M_X
 
     def init_var(self, var_list: list = None):
         """Initializes the VAR model.
@@ -147,10 +165,9 @@ class SP_IV:
 
     def irfs_lp(self):
         """Calculates the impulse response functions for LP-IV."""
-        y_perp, Y_perp, Z_perp = self.perp_matrix()
-        norm = sqrtm((Z_perp @ Z_perp.T) / self.T)
-        return ((y_perp @ Z_perp.T) / self.T) @ norm, (
-            (Y_perp @ Z_perp.T) / self.T
+        norm = sqrtm((self.Z_perp @ self.Z_perp.T) / self.T)
+        return ((self.y_perp @ self.Z_perp.T) / self.T) @ norm, (
+            (self.Y_perp @ self.Z_perp.T) / self.T
         ) @ norm
 
     def instruments_var(self):
@@ -164,28 +181,39 @@ class SP_IV:
         cov = self.fitted_var.resid_acov()[0]
         cholesky_cov = cholesky(cov, lower=True)
         struct_shocks = (np.linalg.inv(cholesky_cov) @ Z).T
-        return (
-            struct_shocks @ self.identified_shocks
+
+        self.Z = (
+            (struct_shocks @ self.identified_shocks).T
             if self.identified_shocks is not None
-            else Z
+            else Z.T
         )
 
-    def perp_matrix_var(self):
-        """Calculates the perpendicular matrices for VAR."""
-        y_H_perp = np.zeros((self.horizon, self.T))
-        Y_H_perp = np.zeros((self.horizon * self.N_Y, self.T))
-        for t in range(self.T):
-            X_t = self.data.iloc[: t + self.var_order].values[::-1]
-            for h in range(1, self.horizon + 1):
-                if t + h < self.num_obs:
-                    forecast = self.fitted_var.forecast(y=X_t, steps=h)[-1]
-                    error = self.data.iloc[t + h] - forecast
-                    y_H_perp[h - 1, t] = error[self.target]  # y_t error
-                    Y_H_perp[(h - 1) * self.N_Y : h * self.N_Y, t] = error[
-                        self.regressors
-                    ]  # Y_t error
+    def first_stage_error(self):
+        XZ = np.vstack([self.X, self.Z])
+        PXZ = XZ.T @ np.linalg.inv(XZ @ XZ.T) @ XZ
+        MXZ = np.eye(self.T) - PXZ
+        return MXZ @ self.Y_H.T  # v_T^perp
 
-        return y_H_perp, Y_H_perp
+    def h_ahead_forecast_var(self, y_index: int, Y_indices: range, history: int = None):
+        """Calculates the perpendicular matrices for VAR."""
+        y_H_fcst = np.zeros((self.horizon, self.T + history))
+        Y_H_fcst = np.zeros((self.horizon * self.N_Y, self.T + history))
+
+        for h in range(self.horizon):
+            for t in range(self.T + history):
+                X_t = self.data.iloc[: t + self.start_time].values
+                if h > history:
+                    forecast = self.fitted_var.forecast(y=X_t, steps=h - history)[-1]
+                    y_H_fcst[h, t] = forecast[y_index]  # y_t h-ahead forecast
+                    Y_H_fcst[h * self.N_Y : (h + 1) * self.N_Y, t] = forecast[
+                        Y_indices
+                    ]  # Y_t h-ahead forecast
+                else:
+                    y_H_fcst[h, t] = X_t[-(history - h + 1), y_index]
+                    Y_H_fcst[h * self.N_Y : (h + 1) * self.N_Y, t] = X_t[
+                        -(history - h + 1), Y_indices
+                    ]
+        return y_H_fcst, Y_H_fcst
 
     def get_irfs(self):
         """Transforms the impulse response functions.
@@ -197,6 +225,13 @@ class SP_IV:
 
     def set_irfs(self, irfs):
         self.irfs = irfs
+
+    def proj_instruments_lp(self):
+        inv = np.linalg.inv(self.Z_perp @ self.Z_perp.T)
+        self.M_Z_perp = self.Z_perp.T @ inv @ self.Z_perp
+
+    def u_perp(self, b):
+        return self.y_perp - (np.kron(b, np.eye(self.horizon)))
 
     def regression_irf(self, impulse_index: int, keep_moments: list):
         """Performs regression on the impulse response functions.
@@ -216,6 +251,6 @@ class SP_IV:
         )
         self.reg = sm.OLS(y, Y).fit()
 
-    def get_klm(self):
+    def get_klm(self, b: np.ndarray):
         """Calculates the KLM statistic."""
         pass

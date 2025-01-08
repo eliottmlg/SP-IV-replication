@@ -93,12 +93,12 @@ def from_monthly_annualized_to_Q(monthly_annualized_inflation):
     return annualized_inflation
 
 
-def compute_year_on_year(window):
+def compute_year_on_year(window, scale: float = 1):
     compounded_change = 1
     for val in window:
-        compounded_change *= (1 + val) ** (
+        compounded_change *= (1 + val / scale) ** (
             1 / 12
         )  # Apply the monthly annualized change directly as it's already in decimal form
 
     # Return the compounded year-on-year change (percentage)
-    return compounded_change - 1
+    return (compounded_change - 1) * scale
