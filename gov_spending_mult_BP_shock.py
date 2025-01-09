@@ -1,3 +1,18 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Dec 23 16:32:41 2024
+
+@author: Maxime Coulet, Nina Stizi, Eliott Von-Pine
+"""
+
+
+# ==============================================================================
+# Advanced Macroeconometrics - Final assignement
+#
+# Dynamic Identification Using System Projections on Instrumental Variables
+# Working Paper No. 2204 – Dallas Fed
+# ==============================================================================
+
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
@@ -7,7 +22,7 @@ from datetime import datetime
 from statsmodels.tsa.api import VAR
 from scipy.linalg import sqrtm, cholesky
 from scipy.stats import chi2
-from scipy.optimize import root_scalar
+from scipy.optimize import minimize_scalar
 
 ## Preprocessing
 
@@ -77,7 +92,7 @@ vars_for_var = [
 ]
 
 # Param
-horizons = range(12)
+horizons = range(20)
 H = len(horizons)
 num_var = len(vars_for_var)
 burn_in = 0
@@ -205,7 +220,9 @@ def KLM(b: np.ndarray) -> np.ndarray:
     return (T - num_var * 4 - num_ins) * term1 @ np.linalg.inv(term2) @ term3
 
 
-def SP_IV_summary(coef, klm_stat, conf_levels=[0.98, 0.95, 0.90, 0.68], scale=1):
+def SP_IV_summary(
+    coef, klm_stat, conf_levels=[0.95, 0.90, 0.68], scale=1, epsilon=10e-4
+):
     """
     Generate a summary for an estimated coefficient using KLM statistics.
 
@@ -213,13 +230,11 @@ def SP_IV_summary(coef, klm_stat, conf_levels=[0.98, 0.95, 0.90, 0.68], scale=1)
     coef (float): Estimated coefficient (theta_hat).
     klm_stat (float): KLM statistic for the coefficient.
     fisher_info (float): Fisher information (inverse of variance).
-    conf_levels (list): List of confidence levels (e.g., [0.98, 0.95, 0.90, 0.68]).
+    conf_levels (list): List of confidence levels (e.g., [0.95, 0.90, 0.68]).
 
     Returns:
     str: Summary of the coefficient estimation.
     """
-    # Calculate p-value associated with the KLM statistic (chi2 with 1 dof)
-    p_value = 1 - chi2.cdf(klm_stat, df=1)
 
     # Confidence intervals
     conf_intervals = {}
@@ -228,11 +243,13 @@ def SP_IV_summary(coef, klm_stat, conf_levels=[0.98, 0.95, 0.90, 0.68], scale=1)
         c = chi2.ppf(level, df=1)
 
         # Solve KLM(theta) = c
-        def klm_equation(b):
-            return KLM(np.array([b])) - c
+        def error_function(b):
+            return abs(KLM(np.array([b])) - c)
 
-        lower_bound = root_scalar(klm_equation, bracket=[-10, coef]).root
-        upper_bound = root_scalar(klm_equation, bracket=[coef, 10]).root
+        lower = minimize_scalar(error_function, bounds=(-1, coef), method="bounded")
+        lower_bound = lower.x if lower.fun < epsilon else -np.inf
+        upper = minimize_scalar(error_function, bounds=(coef, 1), method="bounded")
+        upper_bound = upper.x if upper.fun < epsilon else np.inf
         conf_intervals[level] = (lower_bound, upper_bound)
 
     # Formatting the summary
@@ -240,7 +257,6 @@ def SP_IV_summary(coef, klm_stat, conf_levels=[0.98, 0.95, 0.90, 0.68], scale=1)
     summary += "=" * 50 + "\n"
     summary += f"Estimated Coefficient: {scale*coef:.4f}\n"
     summary += f"KLM Statistic: {klm_stat:.4f}\n"
-    summary += f"P-Value: {p_value:.4e}\n"
     summary += "-" * 50 + "\n"
     summary += f"{'Confidence Intervals':<20} {'Lower':>15} {'Upper':>15}\n"
     summary += "-" * 50 + "\n"
