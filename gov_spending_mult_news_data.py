@@ -30,7 +30,9 @@ from scipy.optimize import root_scalar, root, minimize_scalar
 govdat = pd.read_csv("data/government_spending/govdat3908.csv")
 
 # Remove data before start_time
-start_date = datetime(1939, 1, 1)
+start_date = datetime(
+    1947, 1, 1
+)  # or 1939 to include WWII but we end up with infinitely large confidence set
 govdat = govdat[govdat["quarter"] >= start_date.year]
 num_obs = len(govdat)
 
