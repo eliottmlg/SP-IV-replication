@@ -110,20 +110,6 @@ M_X = sp_iv.M_X
 T = sp_iv.T
 R = np.kron(np.eye(2), np.eye(H).flatten())
 
-# First Stage Errors
-Y_H = np.column_stack(
-    [
-        MBCshock_data[["unemployment_rate", "gamma_f"]]
-        .iloc[h + sp_iv.start_time + 1 : h + sp_iv.T + sp_iv.start_time + 1]
-        .to_numpy()
-        for h in sp_iv.horizons[:12]
-    ]
-).T
-XZ = XZ = np.vstack([X, Z])
-PXZ = XZ.T @ np.linalg.inv(XZ @ XZ.T) @ XZ
-MXZ = np.eye(T) - PXZ
-first_stage_error = MXZ @ Y_H.T
-
 # Forecast
 cpi_fcst, u_fcst = sp_iv.h_ahead_forecast_var(0, 1, 11)
 u_fcst = u_fcst[:, 11:]
@@ -143,7 +129,7 @@ cpi_H_perp = (
     .T[horizons[:-1]][:H]
 )
 u_H_perp = u_fcst[horizons[:-1]][:H]
-
+Y_H_perp = np.vstack([cpi_H_perp, u_H_perp])
 
 # IRFs
 irfs = pd.DataFrame(
@@ -222,7 +208,7 @@ reg = smf.ols(
 ).fit()
 print(reg.summary())
 
-# KLM
+# Matrix
 ZM = np.linalg.inv(sqrtm((Z @ M_X @ Z.T) / T)) @ Z @ M_X
 Theta_Y = np.hstack(
     [
@@ -232,7 +218,12 @@ Theta_Y = np.hstack(
 ).reshape(N_Y * H, 1)
 Theta_y = irfs["y"].iloc[horizons].to_numpy()[:H].reshape(H, N_z)
 YP = Theta_Y @ ZM
-Y_H_perp = np.vstack([cpi_H_perp, u_H_perp])
+
+# First Stage Errors
+Q = (Z @ Z.T) / T
+v_H_perp = Y_H_perp - np.sqrt(1 / Q) * Theta_Y @ Z.reshape(1, T)
+
+# KLM
 
 
 def u1(b: np.ndarray) -> np.ndarray:
@@ -261,7 +252,7 @@ def u2(b: np.ndarray) -> np.ndarray:
 
 def KLM(b: np.ndarray) -> np.ndarray:
     Sigma_inv = np.linalg.inv((u1(b) - u2(b)) @ u1(b).T)
-    Y_tilde = YP - first_stage_error.T @ (u1(b) - u2(b)).T @ np.linalg.inv(
+    Y_tilde = YP - v_H_perp @ (u1(b) - u2(b)).T @ np.linalg.inv(
         (u1(b) - u2(b)) @ (u1(b) - u2(b)).T
     ) @ u2(b)
     term1 = (Sigma_inv @ u1(b) @ Y_tilde.T).flatten().T @ R.T
@@ -272,8 +263,7 @@ def KLM(b: np.ndarray) -> np.ndarray:
     return (T - N_X - N_z) * term1 @ np.linalg.inv(term2) @ term3
 
 
-u = u1(np.array([0.6, -0.14]))
-
+estimated_coef = reg.params
 
 critical_values = {
     "68%": chi2.ppf(0.68, df=2),
@@ -303,13 +293,15 @@ def plot_confidence_regions(gamma_f_grid, lambda_grid, coef):
     """
     klm_grid = compute_klm_grid(gamma_f_grid, lambda_grid)
     plt.figure(figsize=(8, 6))
-    for level, crit_val in critical_values.items():
+    colors = ["red", "orange", "green"]  # Add more colors if needed
+    for (level, crit_val), color in zip(critical_values.items(), colors):
         plt.contour(
             gamma_f_grid,
             lambda_grid,
             klm_grid,
             levels=[crit_val],
             linewidths=1.5,
+            colors=color,
             label=f"{level} CI",
         )
 
@@ -322,3 +314,10 @@ def plot_confidence_regions(gamma_f_grid, lambda_grid, coef):
     plt.legend()
     plt.grid()
     plt.show()
+
+
+gamma_f_range = np.linspace(-0.8, 2, 100)
+lambda_range = np.linspace(1, 3, 100)
+gamma_f_grid, lambda_grid = np.meshgrid(gamma_f_range, lambda_range)
+
+plot_confidence_regions(gamma_f_grid, lambda_grid, estimated_coef)
